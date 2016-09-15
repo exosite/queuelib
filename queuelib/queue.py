@@ -156,18 +156,22 @@ class LifoDiskQueue(object):
             self.f = open(path, 'wb+')
             self.f.write(struct.pack(self.SIZE_FORMAT, 0))
             self.size = 0
-
+        self.lock = threading.Lock()
+        
     def push(self, string):
         if not isinstance(string, bytes):
             raise TypeError('Unsupported type: {}'.format(type(string).__name__))
+        self.lock.acquire()
         self.f.write(string)
         ssize = struct.pack(self.SIZE_FORMAT, len(string))
         self.f.write(ssize)
         self.size += 1
+        self.lock.release()
 
     def pop(self):
         if not self.size:
             return
+        self.lock.acquire()
         self.f.seek(-self.SIZE_SIZE, os.SEEK_END)
         size, = struct.unpack(self.SIZE_FORMAT, self.f.read())
         self.f.seek(-size-self.SIZE_SIZE, os.SEEK_END)
@@ -175,15 +179,18 @@ class LifoDiskQueue(object):
         self.f.seek(-size, os.SEEK_CUR)
         self.f.truncate()
         self.size -= 1
+        self.lock.release()
         return data
 
     def close(self):
+        self.lock.acquire()
         if self.size:
             self.f.seek(0)
             self.f.write(struct.pack(self.SIZE_FORMAT, self.size))
         self.f.close()
         if not self.size:
             os.remove(self.path)
+        self.lock.release()
 
     def __len__(self):
         return self.size
