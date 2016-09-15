@@ -4,7 +4,7 @@ import json
 import struct
 import sqlite3
 from collections import deque
-
+import threading
 
 class FifoMemoryQueue(object):
     """In-memory FIFO queue, API compliant with FifoDiskQueue."""
@@ -47,10 +47,12 @@ class FifoDiskQueue(object):
         self.headf = self._openchunk(self.info['head'][0], 'ab+')
         self.tailf = self._openchunk(self.info['tail'][0])
         os.lseek(self.tailf.fileno(), self.info['tail'][2], os.SEEK_SET)
+        self.lock = threading.Lock()
 
     def push(self, string):
         if not isinstance(string, bytes):
             raise TypeError('Unsupported type: {}'.format(type(string).__name__))
+        self.lock.acquire()
         hnum, hpos = self.info['head']
         hpos += 1
         szhdr = struct.pack(self.szhdr_format, len(string))
@@ -62,17 +64,22 @@ class FifoDiskQueue(object):
             self.headf = self._openchunk(hnum, 'ab+')
         self.info['size'] += 1
         self.info['head'] = [hnum, hpos]
+        self._saveinfo(self.info)
+        self.lock.release()
 
     def _openchunk(self, number, mode='rb'):
         return open(os.path.join(self.path, 'q%05d' % number), mode)
 
     def pop(self):
+        self.lock.acquire()
         tnum, tcnt, toffset = self.info['tail']
         if [tnum, tcnt] >= self.info['head']:
+            self.lock.release()
             return
         tfd = self.tailf.fileno()
         szhdr = os.read(tfd, self.szhdr_size)
         if not szhdr:
+            self.lock.release()
             return
         size, = struct.unpack(self.szhdr_format, szhdr)
         data = os.read(tfd, size)
@@ -86,14 +93,18 @@ class FifoDiskQueue(object):
             self.tailf = self._openchunk(tnum)
         self.info['size'] -= 1
         self.info['tail'] = [tnum, tcnt, toffset]
+        self._saveinfo(self.info)
+        self.lock.release()
         return data
 
     def close(self):
+        self.lock.acquire()
         self.headf.close()
         self.tailf.close()
         self._saveinfo(self.info)
         if len(self) == 0:
             self._cleanup()
+        self.lock.release()
 
     def __len__(self):
         return self.info['size']
