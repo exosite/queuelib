@@ -70,6 +70,25 @@ class FifoDiskQueue(object):
     def _openchunk(self, number, mode='rb'):
         return open(os.path.join(self.path, 'q%05d' % number), mode)
 
+    def peek(self):
+        self.lock.acquire()
+        tnum, tcnt, toffset = self.info['tail']
+        if [tnum, tcnt] >= self.info['head']:
+            self.lock.release()
+            return
+        tfd = self.tailf.fileno()
+        szhdr = os.read(tfd, self.szhdr_size)
+        if not szhdr:
+            os.lseek(tfd, toffset, os.SEEK_SET)
+            self.lock.release()
+            return
+        size, = struct.unpack(self.szhdr_format, szhdr)
+        data = os.read(tfd, size)
+        
+        os.lseek(tfd, toffset, os.SEEK_SET)
+        self.lock.release()
+        return data
+
     def pop(self):
         self.lock.acquire()
         tnum, tcnt, toffset = self.info['tail']
